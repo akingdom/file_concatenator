@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # FILENAME: file_concatenator.py
-# DESCRIPTION: Recursively concatenate text files with size limits and file splitting capabilities.
+# DESCRIPTION: Concatenate text files from directories and/or explicit files, with size limits and file splitting.
 
 import argparse
 from pathlib import Path
@@ -83,8 +83,6 @@ class OutputFileManager:
         try:
             if self.outfile_handle and self.outfile_handle is not sys.stdout:
                 self.outfile_handle.close()
-                # When we close the previous handle, we commit which file was last used in it
-                # We need a way to store this commit *before* open_handle is called if it was forced by headroom check
                 
             self.outfile_handle = open(final_path, 'w', encoding='utf-8')
             if self.current_file_index > 1:
@@ -157,12 +155,13 @@ def write_to_output(mgr, content_bytes, size_limit, relative_path_str, current_s
         mgr.last_source_file_written = None 
 
 
-def concatenate_files(start_dir, extensions, output_file_base, exclude_dirs, size_limit_bytes, headroom_bytes, use_multipart_naming):
+def concatenate_files(sources, extensions, output_file_base, exclude_dirs, size_limit_bytes, headroom_bytes, use_multipart_naming):
     """
-    Recursively finds files with specified extensions and concatenates their content,
+    Finds files from the given sources (directories and/or explicit files) and concatenates their content,
     splitting into new files if size limit is reached.
     """
-    start_path = Path(start_dir)
+    # Use current working directory as base for relative paths in headers
+    base_dir = Path.cwd()
     
     if not output_file_base:
         size_limit_bytes = None
@@ -178,34 +177,49 @@ def concatenate_files(start_dir, extensions, output_file_base, exclude_dirs, siz
         if output_ext in extensions:
             excluded_output_paths_resolved.add(str(Path(output_file_base).resolve()))
 
+    collected_files = set()         # use set to avoid duplicates (if a file is given twice)
+    for source in sources:
+        source_path = Path(source)
+        if source_path.is_dir():
+            # Recursively walk directory
+            for root, dirs, files in os.walk(source_path):
+                # Exclude directories (both by name and relative path)
+                dirs[:] = [d for d in dirs if d not in exclude_dirs and not Path(root, d).is_relative_to(source_path) in [Path(ed) for ed in exclude_dirs]]
 
+                for file in files:
+                    file_path = Path(root) / file
+                    if any(file_path.name.endswith(f".{ext}") for ext in extensions):
+                        collected_files.add(file_path)
+        elif source_path.is_file():
+            # Explicit file: include it unconditionally (ignore extension and exclusion)
+            collected_files.add(source_path)
+        else:
+            print(f"Warning: {source} is not a valid file or directory, skipping.", file=sys.stderr)
+
+    # Filter out output files (self‑exclusion)
     files_to_process = []
-    for root, dirs, files in os.walk(start_dir):
-        dirs[:] = [d for d in dirs if d not in exclude_dirs and not Path(start_dir, d).is_relative_to(start_dir) in [Path(ed) for ed in exclude_dirs]]
+    for file_path in collected_files:
+        resolved_file_path_str = str(file_path.resolve())
+        is_output_file = False
+        if resolved_file_path_str in excluded_output_paths_resolved:
+            is_output_file = True
+        if output_file_base and use_multipart_naming:
+            output_base_name = Path(output_file_base).name
+            if re.match(rf"^{re.escape(output_base_name)}\.part\d+$", file_path.name) or \
+               re.match(rf"^{re.escape(Path(output_file_base).stem)}\.part\d+{re.escape(Path(output_file_base).suffix)}$", file_path.name):
+                is_output_file = True
+        if not is_output_file:
+            files_to_process.append(file_path)
 
-        for file in files:
-            file_path = Path(root) / file
-            
-            if any(file_path.name.endswith(f".{ext}") for ext in extensions):
-                resolved_file_path_str = str(file_path.resolve())
-
-                is_output_file = False
-                if resolved_file_path_str in excluded_output_paths_resolved:
-                    is_output_file = True
-                
-                if output_file_base and use_multipart_naming:
-                     output_base_name = Path(output_file_base).name
-                     if re.match(rf"^{re.escape(output_base_name)}\.part\d+$", file_path.name) or \
-                        re.match(rf"^{re.escape(Path(output_file_base).stem)}\.part\d+{re.escape(Path(output_file_base).suffix)}$", file_path.name):
-                        is_output_file = True
-
-                if not is_output_file:
-                    files_to_process.append(file_path)
-
+    # Sort for deterministic order
     files_to_process.sort()
 
     for file_path in files_to_process:
-        relative_path_str = os.path.relpath(file_path, start_dir)
+        # Show path relative to the current working directory
+        try:
+            relative_path_str = os.path.relpath(file_path, base_dir)
+        except ValueError:
+            relative_path_str = str(file_path)
         
         try:
             with open(file_path, 'r', encoding='utf-8', errors='ignore') as infile:
@@ -241,24 +255,28 @@ def concatenate_files(start_dir, extensions, output_file_base, exclude_dirs, siz
 
 
 def main():
-    custom_usage = "%(prog)s directory [-e EXTENSIONS ...] [-x EXCLUDE ...] [-o OUTPUT] [--size-limit SIZE] [--headroom SIZE] [-h]"
+    custom_usage = "%(prog)s source [source ...] [-e EXTENSIONS ...] [-x EXCLUDE ...] [-o OUTPUT] [--size-limit SIZE] [--headroom SIZE] [-h]"
 
     parser = argparse.ArgumentParser(
         usage=custom_usage,
-        description="Recursively concatenate text files with specified extensions, excluding specified directories, and handling output size limits.",
-        epilog="Example: ./file_concatenator.py . --extensions js --exclude node_modules -o combined.txt --size-limit 1MB --headroom 1K"
+        description="Concatenate text files from directories and/or explicit files, with extension filtering, directory exclusion, and output size limits.",
+        epilog="Examples:\n"
+               "  ./file_concatenator.py . --extensions js --exclude node_modules -o combined.txt --size-limit 1MB\n"
+               "  ./file_concatenator.py file1.txt file2.md src/ --extensions py -o all.txt"
     )
     
     parser.add_argument(
-        "directory",
-        help="The mandatory starting directory for recursive search."
+        "sources",
+        nargs="+",
+        help="One or more source paths (files or directories). Directories are scanned recursively; files are included directly."
     )
     
     parser.add_argument(
         "-e", "--extensions",
         nargs="+",
         default=["txt", "md", "html", "css", "js"],
-        help="A space-separated list of file extensions to include (default: txt md html css js)."
+        help="A space-separated list of file extensions to include when scanning directories (default: txt md html css js). "
+             "Explicitly given files are always included regardless of extension."
     )
 
     parser.add_argument(
@@ -295,7 +313,7 @@ def main():
     
     use_multipart_naming = args.size_limit is not None 
 
-    concatenate_files(args.directory, args.extensions, args.output_file_base, args.exclude, size_limit_bytes, headroom_bytes, use_multipart_naming)
+    concatenate_files(args.sources, args.extensions, args.output_file_base, args.exclude, size_limit_bytes, headroom_bytes, use_multipart_naming)
 
 if __name__ == "__main__":
     main()

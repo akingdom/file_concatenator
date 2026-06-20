@@ -1,17 +1,19 @@
 # File Concatenator
 
-A powerful Python utility to recursively concatenate text files with extension filtering, directory exclusion, output size limits, and automatic file splitting.
+A powerful Python utility to recursively concatenate text files with extension filtering, directory exclusion, output size limits, and automatic file splitting. 
+
+keywords: file join files join multiple files combine files concatenate files concatenate multiple files collect files collect multiple files
 
 ## 🚀 Features
 
-- Recursively traverses directories to find and concatenate files
-- Supports extension filtering (e.g., `.txt`, `.md`, `.js`)
-- Excludes specified directories from processing
-- Optional output to file or stdout
-- Enforces output file size limits with automatic multipart splitting
-- Adds clear headers for each source file
-- Handles human-readable size inputs (e.g., `1MB`, `500K`, `2G`)
-- Gracefully manages file continuation across split outputs
+- **Accepts multiple sources**: mix directories (recursively scanned) and individual files.
+- Supports extension filtering (e.g., `.txt`, `.md`, `.js`) – only applies when scanning directories; explicit files are always included.
+- Excludes specified directories from processing.
+- Optional output to file or stdout.
+- Enforces output file size limits with automatic multipart splitting.
+- Adds clear headers for each source file.
+- Handles human-readable size inputs (e.g., `1MB`, `500K`, `2G`).
+- Gracefully manages file continuation across split outputs.
 
 ## 📦 Installation
 
@@ -26,29 +28,36 @@ python3 file_concatenator.py --help
 ## 🛠 Usage
 
 ```bash
-./file_concatenator.py DIRECTORY [options]
+./file_concatenator.py SOURCE [SOURCE ...] [options]
 ```
+
+**SOURCE** can be a file (included directly) or a directory (scanned recursively for matching extensions).
 
 ### Options
 
 | Option | Description |
 |--------|-------------|
-| `-e`, `--extensions` | List of file extensions to include (default: `txt md html css js`) |
-| `-x`, `--exclude` | List of directory names or relative paths to exclude |
-| `-o`, `--output` | Output file base name (writes to stdout if omitted) |
-| `--size-limit` | Max size per output file (e.g., `100K`, `1MB`) |
-| `--headroom` | Minimum space required before writing a new file (default: `1K`) |
-| `-h`, `--help` | Show help message and exit |
+| `-e`, `--extensions` | List of file extensions to include when scanning directories (default: `txt md html css js`). Explicit files are always included. |
+| `-x`, `--exclude` | List of directory names or relative paths to exclude from directory scans. |
+| `-o`, `--output` | Output file base name (writes to stdout if omitted). |
+| `--size-limit` | Max size per output file (e.g., `100K`, `1MB`). |
+| `--headroom` | Minimum space required before writing a new file (default: `1K`). |
+| `-h`, `--help` | Show help message and exit. |
 
-### Example
+### Examples
 
 ```bash
+# Scan current directory for .js, .css, .html files, exclude node_modules and dist
 ./file_concatenator.py . \
   --extensions js css html \
   --exclude node_modules dist \
   --output combined.txt \
   --size-limit 1MB \
   --headroom 1K
+
+# Combine two specific files and a whole directory
+./file_concatenator.py README.md file_concatenator.py src/ \
+  --output docs.txt
 ```
 
 ## 📂 Output Behavior
@@ -74,14 +83,11 @@ python3 file_concatenator.py test_dir -o output.txt
 
 ## 🧠 Notes
 
-- Handles UTF-8 encoding with fallback for ignored errors
-- Skips output files during recursive search to avoid self-inclusion
-- Designed for modular extension and auditability
+- Handles UTF-8 encoding with fallback for ignored errors.
+- Skips output files during recursive search to avoid self-inclusion.
+- Designed for modular extension and auditability.
+- Explicitly listed files are **always** included, regardless of extension and exclusion settings.
 
 ## 📜 License
 
 MIT License. See `LICENSE` file for details.
-
----
-
-Let me know if you'd like badges, contributor sections, or GitHub Actions integration added.
