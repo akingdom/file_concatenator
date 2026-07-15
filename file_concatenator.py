@@ -155,11 +155,27 @@ def write_to_output(mgr, content_bytes, size_limit, relative_path_str, current_s
         mgr.last_source_file_written = None 
 
 
-def concatenate_files(sources, extensions, output_file_base, exclude_dirs, size_limit_bytes, headroom_bytes, use_multipart_naming):
+def concatenate_files(sources, extensions, output_file_base, exclude_dirs, size_limit_bytes, headroom_bytes, use_multipart_naming, verbose, summary):
     """
     Finds files from the given sources (directories and/or explicit files) and concatenates their content,
     splitting into new files if size limit is reached.
     """
+    # Verbose helper
+    def vprint(msg):
+        if verbose:
+            print(msg, file=sys.stderr, flush=True)
+
+    # Statistics for summary
+    stats = {
+        'total': 0,
+        'included': 0,
+        'skipped_extension': 0,
+        'skipped_extensions': set(),
+        'skipped_output': 0,
+        'skipped_error': 0,
+        'skipped_other': 0
+    }
+
     # Use current working directory as base for relative paths in headers
     base_dir = Path.cwd()
     
@@ -188,13 +204,20 @@ def concatenate_files(sources, extensions, output_file_base, exclude_dirs, size_
 
                 for file in files:
                     file_path = Path(root) / file
+                    # Check if extension matches
                     if any(file_path.name.endswith(f".{ext}") for ext in extensions):
                         collected_files.add(file_path)
+                    else:
+                        ext = file_path.suffix.lstrip('.')
+                        vprint(f"✗ {file_path}: skipped by extension (.{ext} not in {extensions})")
+                        stats['skipped_extension'] += 1
+                        stats['skipped_extensions'].add(ext)
         elif source_path.is_file():
             # Explicit file: include it unconditionally (ignore extension and exclusion)
             collected_files.add(source_path)
         else:
             print(f"Warning: {source} is not a valid file or directory, skipping.", file=sys.stderr)
+            stats['skipped_other'] += 1
 
     # Filter out output files (self‑exclusion)
     files_to_process = []
@@ -210,6 +233,11 @@ def concatenate_files(sources, extensions, output_file_base, exclude_dirs, size_
                 is_output_file = True
         if not is_output_file:
             files_to_process.append(file_path)
+        else:
+            vprint(f"✗ {file_path}: skipped (output file)")
+            stats['skipped_output'] += 1
+
+    stats['total'] = len(files_to_process) + stats['skipped_extension'] + stats['skipped_output'] + stats['skipped_error'] + stats['skipped_other']
 
     # Sort for deterministic order
     files_to_process.sort()
@@ -242,9 +270,17 @@ def concatenate_files(sources, extensions, output_file_base, exclude_dirs, size_
                     relative_path_str,
                     file_path # Pass the full path to track completion state
                 )
+                vprint(f"✓ {file_path}")   # Successfully written
+                stats['included'] += 1
                 
         except IOError as e:
+            vprint(f"✗ {file_path}: error reading - {e}")
             print(f"Error reading file {file_path}: {e}", file=sys.stderr)
+            stats['skipped_error'] += 1
+        except UnicodeDecodeError as e:
+            vprint(f"✗ {file_path}: cannot read as text (encoding error)")
+            print(f"Error decoding file {file_path}: {e}", file=sys.stderr)
+            stats['skipped_error'] += 1
 
     if output_file_base and output_manager.outfile_handle is not sys.stdout:
         output_manager.outfile_handle.close()
@@ -252,6 +288,20 @@ def concatenate_files(sources, extensions, output_file_base, exclude_dirs, size_
              print(f"\nSuccessfully concatenated files into {Path(output_file_base).stem}.partX.ext files.")
         else:
              print(f"\nSuccessfully concatenated files into {Path(output_file_base).name}")
+
+    # Summary
+    if summary:
+        print("\n--- Summary ---", file=sys.stderr)
+        print(f"Total files encountered: {stats['total']}", file=sys.stderr)
+        print(f"Files included: {stats['included']}", file=sys.stderr)
+        if stats['skipped_extension']:
+            print(f"Skipped by extension: {stats['skipped_extension']} (extensions: {', '.join(sorted(stats['skipped_extensions']))})", file=sys.stderr)
+        if stats['skipped_output']:
+            print(f"Skipped because they are output files: {stats['skipped_output']}", file=sys.stderr)
+        if stats['skipped_error']:
+            print(f"Skipped due to read/encoding errors: {stats['skipped_error']}", file=sys.stderr)
+        if stats['skipped_other']:
+            print(f"Skipped for other reasons: {stats['skipped_other']}", file=sys.stderr)
 
 
 def main():
@@ -306,6 +356,18 @@ def main():
         help="Minimum remaining space required in the current output file before attempting to write a new source file's content (default: 1K). Set to '0' to maximize file utilization. Only used with -o and --size-limit."
     )
     
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Print every file processed and a reason for skips (to stderr)."
+    )
+
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Print a summary of processed/skipped files (to stderr) instead of per‑file details."
+    )
+    
     args = parser.parse_args()
 
     size_limit_bytes = human_readable_to_bytes(args.size_limit)
@@ -313,7 +375,9 @@ def main():
     
     use_multipart_naming = args.size_limit is not None 
 
-    concatenate_files(args.sources, args.extensions, args.output_file_base, args.exclude, size_limit_bytes, headroom_bytes, use_multipart_naming)
+    concatenate_files(args.sources, args.extensions, args.output_file_base, args.exclude,
+                      size_limit_bytes, headroom_bytes, use_multipart_naming,
+                      args.verbose, args.summary)
 
 if __name__ == "__main__":
     main()
